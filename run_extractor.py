@@ -272,20 +272,18 @@ class LoughboroughtownhallExtractorr(BaseExtractor):
                 book_link_el = row.find_element(By.CSS_SELECTOR, "book_col a")
                 book_link = book_link_el.get_attribute("href")
               
-                perf_date = parsed_dt.strftime("%Y-%m-%d")
-                perf_time = convert_to_24hr(time_str)
+                perf_date = parsed_dt(date_element).strftime("%Y-%m-%d")
+                perf_time = convert_to_24hr(time_element)
                 
                 if not perf_date and not perf_time:
                     continue
 
-                performances.append(
-                    {
+                performances.append({
                         "date": perf_date,
                         "time": perf_time,
                         "venue": venue
                         "booking_url": book_link 
-                    }
-                )
+                    })
                     
         except Exception as e:
             self.custom_logger.warning(f"  Error extracting performances: {e}")
