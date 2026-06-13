@@ -319,28 +319,22 @@ class LoughboroughtownhallExtractorr(BaseExtractor):
                 driver.get(perf["booking_url"])
 
                 iframe = WebDriverWait(driver, IFRAME_WAIT_TIMEOUT).until(
-                    EC.presence_of_element_located((By.ID, "SpektrixIFrame"))
-                )
+                    EC.presence_of_element_located((By.ID, "SpektrixIFrame")))
+              
                 driver.switch_to.frame(iframe)
 
                 WebDriverWait(driver, SEAT_WAIT_TIMEOUT).until(
                     EC.presence_of_element_located(
-                        (By.CSS_SELECTOR, "div.SeatingArea img")
-                    )
-                )
-
-                seat_images = driver.find_elements(
-                    By.CSS_SELECTOR, "div.SeatingArea img"
-                )
+                        (By.CSS_SELECTOR, "div.SeatingArea img")))
+   
+                seat_images = driver.find_elements(By.CSS_SELECTOR, "div.SeatingArea img")
                 perf_capacity = len(seat_images)
                 if max_capacity is None or perf_capacity > max_capacity:
                     max_capacity = perf_capacity
 
                 seat_list = []
                 for img in seat_images:
-                    tooltip = (
-                        img.get_attribute("tooltip") or img.get_attribute("title") or ""
-                    )
+                    tooltip = (img.get_attribute("tooltip") or img.get_attribute("title") or "")
                     if not tooltip:
                         continue
 
@@ -410,65 +404,33 @@ class LoughboroughtownhallExtractorr(BaseExtractor):
             last_height = new_height
 
     def _get_venue_details(self, driver) -> dict:
-        """Extract venue address from the listing page footer; returns None values on failure.
-
-        The listing page footer <p> uses non-breaking spaces (&nbsp;) throughout, so
-        'St Mary' with a regular ASCII space never matches. We anchor on 'HP5' (postcode
-        prefix, plain ASCII) instead, then normalise U+00A0 → space before parsing.
-
+        """Extract venue address from the contact page footer; returns None values on failure.
         Footer <p> structure (after normalisation):
-            © The Elgiva 2026. All rights reserved.
-            St Mary's Way, Chesham, Buckinghamshire, HP5 1HR
+            © 2024 Loughborough Town Hall
+            Market Place, Loughborough, Leicestershire, LE11 3EB
         """
-        result = {"venue": None, "address": None, "city": None, "country": None}
+        data = {"full_address": None, "city": None, "country": "United Kingdom"}
         try:
-            for el in driver.find_elements(By.XPATH, "//p[contains(., 'HP5')]"):
-                # Normalise non-breaking spaces and curly apostrophe
-                raw = el.text.replace(" ", " ").replace("’", "'")
-                lines = [ln.strip() for ln in raw.split("\n") if ln.strip()]
-
-                addr_line = next(
-                    (ln for ln in lines if re.search(r"HP5\s*\d", ln)), None
-                )
-                if not addr_line:
-                    continue
-
-                # Venue name: token(s) between the leading symbol and the 4-digit year
-                # e.g. "© The Elgiva 2026. All rights reserved."
-                for ln in lines:
-                    m = re.search(r"\S+\s+([\w\s]+?)\s+\d{4}", ln)
-                    if m:
-                        result["venue"] = m.group(1).strip()
-                        break
-
-                addr_parts = [p.strip() for p in addr_line.split(",")]
-                postcode = extract_postcode(addr_line, region="UK")
-                result["address"] = f"{addr_parts[0]}, {postcode}" if postcode else addr_parts[0]
-                result["city"] = addr_parts[1] if len(addr_parts) > 1 else None
+            # Match the specific contact paragraph using structural relationship selectors
+            # Looking inside standard footer -> columns -> target address string paragraph
+            # Market Place, Loughborough, Leicestershire, LE11 3EB
+            address_p = driver.find_element(By.CSS_SELECTOR, "footer#colophon div.column p")
+            raw_address = address_p.text.strip()
+            data["full_address"] = raw_address
+            
+            address_parts = [part.strip() for part in raw_address.split(",")]
+            
+            if len(address_parts) >= 3:
+                data["city"] = address_parts[1]
+                postcode = extract_postcode(raw, region="UK")
                 if postcode:
-                    _, country = get_city_country_uk(postcode)
-                    result["country"] = normalize_country(country) if country else None
-                return result
-
-            # Strategy 2: contact page fallback
-            self.custom_logger.info("  Listing page footer parse failed — trying contact page")
-            driver.get(f"{BASE_URL}/contact/")
-            for el in driver.find_elements(By.XPATH, "//p[contains(., 'HP5')]"):
-                raw = el.text.replace(" ", " ").replace("’", "'")
-                parts = [p.strip() for p in raw.strip().split(",")]
-                if len(parts) >= 3:
-                    postcode = extract_postcode(raw, region="UK")
-                    result["venue"] = parts[0]
-                    result["address"] = f"{parts[1]}, {postcode}" if postcode else parts[1]
-                    result["city"] = parts[2]
-                    if postcode:
-                        _, country = get_city_country_uk(postcode)
-                        result["country"] = normalize_country(country) if country else None
-                    return result
-
-        except Exception as e:
-            self.custom_logger.warning(f"  Venue extraction failed: {e}")
-        return result
+                  _, country = get_city_country_uk(postcode)
+                  data["country"] = normalize_country(country) if country else None
+                return data
+    
+          except Exception as e:
+              self.custom_logger.warning(f"  Venue extraction failed: {e}")
+          return data
 
 
 def main():
