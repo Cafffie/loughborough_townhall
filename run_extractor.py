@@ -156,7 +156,7 @@ class LoughboroughtownhallExtractorr(BaseExtractor):
         try:
             WebDriverWait(driver, PAGE_LOAD_TIMEOUT).until(
                 EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, ".event_item")
+                    (By.CSS_SELECTOR, "div.events_holder div.event_item")
                 )
             )
         except TimeoutException:
@@ -164,7 +164,7 @@ class LoughboroughtownhallExtractorr(BaseExtractor):
             return []
 
         shows = []
-        shows_cards = events_container.find_elements(By.CLASS_NAME, "event_item")
+        shows_cards = driver.find_elements(By.CSS_SELECTOR, "div.events_holder div.event_item")
         for item in shows_cards:
             try:
                 title_element = item.find_element(By.TAG_NAME, "h4")
@@ -252,7 +252,17 @@ class LoughboroughtownhallExtractorr(BaseExtractor):
         """
         performances = []
         try:
-            rows = table_container.find_elements(By.CSS_SELECTOR, ".show_row")
+          # Find all h5 elements with class 'detail' inside this container
+          detail_elements = event_details_element.find_elements(By.CSS_SELECTOr, ".event_details h5.detail")
+          if len(detail_elements) > 1:
+              venue = detail_elements[1].text.strip()
+            
+        except NoSuchElementException:
+          self.custom_logger.warning(f" venue not found: {e}")
+            pass
+          
+        try:
+            rows = driver.find_elements(By.CSS_SELECTOR, "div.show_details_table div.show_row")
             
             for row in rows:
                 date_element = row.find_element(By.CSS_SELECTOR, ".date_col").text.strip()
@@ -262,53 +272,24 @@ class LoughboroughtownhallExtractorr(BaseExtractor):
                 book_link_el = row.find_element(By.CSS_SELECTOR, "book_col a")
                 book_link = book_link_el.get_attribute("href")
               
-                perf_date = format_date_to_iso(date_element) 
+                perf_date = parsed_dt.strftime("%Y-%m-%d")
                 perf_time = convert_to_24hr(time_str)
                 
                 if not perf_date and not perf_time:
                     continue
 
-                iso_date = (
-                    f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
+                performances.append(
+                    {
+                        "date": perf_date,
+                        "time": perf_time,
+                        "venue": venue
+                        "booking_url": book_link 
+                    }
                 )
-                
-                        is_sold_out = (
-                            "sold out" in title_attr
-                            or "dot_events_sold_out" in class_string
-                        )
-
-                        performances.append(
-                            {
-                                "date": iso_date,
-                                "time": iso_time,
-                                "booking_url": (
-                                    "" if is_sold_out else (link.get_attribute("href") or "")
-                                ),
-                                "sold_out": is_sold_out,
-                            }
-                        )
-                    except Exception as inner_e:
-                        self.custom_logger.warning(
-                            f"  Skipping perf entry: {inner_e}"
-                        )
+                    
         except Exception as e:
             self.custom_logger.warning(f"  Error extracting performances: {e}")
         return performances
-
-    def _parse_link_time(self, link_element) -> str | None:
-        """Extract and normalise performance time from a calendar link element."""
-        try:
-            raw_text = link_element.text.strip().lower()
-            span_text = link_element.find_element(By.CSS_SELECTOR, "span").text.strip()
-            match = re.search(r"(\d+):(\d+)", span_text)
-            if not match:
-                return None
-            hour, minute = match.group(1), match.group(2)
-            suffix = "pm" if "pm" in raw_text else "am" if "am" in raw_text else ""
-            time_str = f"{hour}:{minute} {suffix}".strip() if suffix else f"{hour}:{minute}"
-            return convert_to_24hr(time_str)
-        except Exception:
-            return None
 
     # ------------------------------------------------------------------
     # Level 4 — Seat pricing via Spektrix iframe
