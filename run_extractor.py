@@ -1,4 +1,4 @@
-"""Elgiva Theatre (elgiva.com) extractor.
+"""Loughboroughtownhall Theatre (loughboroughtownhall.co.uk/) extractor.
 
 Navigation hierarchy:
   Listing:  Two pre-filtered category pages (Musical, Play).
@@ -51,7 +51,7 @@ from .elgiva_config import (
 logger = setup_logger(__name__, log_to_file=False)
 
 
-class ElgivaExtractor(BaseExtractor):
+class LoughboroughtownhallExtractorr(BaseExtractor):
     def __init__(self, local_test=False, show_count=None, **kwargs):
         super().__init__(site_id=SITE_ID, **kwargs)
         self.local_test = local_test
