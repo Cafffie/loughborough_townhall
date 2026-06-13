@@ -25,6 +25,7 @@ from utils.logger import setup_logger
 from utils.scraping_helpers import (
     accept_cookies,
     convert_to_24hr,
+    format_date_to_iso,
     extract_postcode,
     format_datetime_key,
     get_city_country_uk,
@@ -149,10 +150,13 @@ class LoughboroughtownhallExtractorr(BaseExtractor):
     # ------------------------------------------------------------------
 
     def _extract_event_list(self, driver, category: str) -> list[dict]:
+        """
+        Parses individual cards inside the main events list holder.
+        """
         try:
             WebDriverWait(driver, PAGE_LOAD_TIMEOUT).until(
                 EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "article.elementor-post")
+                    (By.CSS_SELECTOR, ".event_item")
                 )
             )
         except TimeoutException:
@@ -160,15 +164,19 @@ class LoughboroughtownhallExtractorr(BaseExtractor):
             return []
 
         shows = []
-        for article in driver.find_elements(By.CSS_SELECTOR, "article.elementor-post"):
+        shows_cards = events_container.find_elements(By.CLASS_NAME, "event_item")
+        for item in shows_cards:
             try:
-                link = article.find_element(
-                    By.CSS_SELECTOR, "h2.elementor-post__title a"
-                )
+                title_element = item.find_element(By.TAG_NAME, "h4")
+                title = title_element.get_attribute("textContent").strip()
+
+                link_element = item.find_element(By.TAG_NAME, "a")
+                link = link_element.get_attribute("href")
+              
                 shows.append(
                     {
-                        "title": link.get_attribute("textContent").strip(),
-                        "event_url": link.get_attribute("href"),
+                        "title": title,
+                        "event_url": link,
                         "category": category,
                     }
                 )
@@ -239,30 +247,31 @@ class LoughboroughtownhallExtractorr(BaseExtractor):
     # ------------------------------------------------------------------
 
     def _extract_performances(self, driver) -> list[dict]:
+        """
+        Parses the performance instances row by row from the show details grid.
+        """
         performances = []
         try:
-            rows = driver.find_elements(
-                By.CSS_SELECTOR, "tr[class*='dot_events_day_']"
-            )
+            rows = table_container.find_elements(By.CSS_SELECTOR, ".show_row")
+            
             for row in rows:
-                class_attr = row.get_attribute("class") or ""
-                date_match = re.search(
-                    r"dot_events_day_(\d{4})(\d{2})(\d{2})", class_attr
-                )
-                if not date_match:
+                date_element = row.find_element(By.CSS_SELECTOR, ".date_col").text.strip()
+                time_element = row.find_element(By.CSS_SELECTOR, ".time_col").text.strip()
+                price_text = row.find_element(By.CLASS_NAME, "price_col").text.strip()
+                # Booking URL token
+                book_link_el = row.find_element(By.CSS_SELECTOR, "book_col a")
+                book_link = book_link_el.get_attribute("href")
+              
+                perf_date = format_date_to_iso(date_element) 
+                perf_time = convert_to_24hr(time_str)
+                
+                if not perf_date and not perf_time:
                     continue
 
                 iso_date = (
                     f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
                 )
-                for link in row.find_elements(By.CSS_SELECTOR, "td a"):
-                    try:
-                        iso_time = self._parse_link_time(link)
-                        if not iso_time:
-                            continue
-
-                        title_attr = (link.get_attribute("title") or "").lower()
-                        class_string = link.get_attribute("class") or ""
+                
                         is_sold_out = (
                             "sold out" in title_attr
                             or "dot_events_sold_out" in class_string
