@@ -325,7 +325,7 @@ class LoughboroughtownhallExtractorr(BaseExtractor):
                     EC.presence_of_element_located(
                         (By.CSS_SELECTOR, "div.SeatingArea img")))
    
-                seat_images = driver.find_elements(By.CSS_SELECTOR, "div.SeatingArea img")
+                seat_images = driver.find_elements(By.CSS_SELECTOR, "div.SeatingArea img[class*='Seat']")
                 perf_capacity = len(seat_images)
                 if max_capacity is None or perf_capacity > max_capacity:
                     max_capacity = perf_capacity
