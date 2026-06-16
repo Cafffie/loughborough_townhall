@@ -2,37 +2,36 @@
 
 Navigation hierarchy:
   Listing:   Unified or category-filtered event listings.
-             Show cards are <div.event_item> elements located within a 
-             <div.events_holder> layout. Titles and page URLs are extracted 
+             Show cards are <div.event_item> elements located within a
+             <div.events_holder> layout. Titles and page URLs are extracted
              from the nested <div.event_content a h4> elements.
   Detail:    Each individual show page features an execution schedule wrapper.
              Performances are structured as row-by-row layout lines matching
-             <div.show_details_table div.show_row>, containing individual 
+             <div.show_details_table div.show_row>, containing individual
              columns for date, time, price boundaries, and dedicated booking links.
-             The parent sub-header <div.event_details> contains <h5.detail> 
+             The parent sub-header <div.event_details> contains <h5.detail>
              nodes hosting the specific performance year and explicit venue name.
   Seats:     Each direct booking anchor routes out to an embedded Spektrix engine.
              Within the core seating frame, interactive seat positions are mapped
-             via <div.SeatingArea img[class*='Seat']> elements. Selectable open seats 
-             contain 'SeatSelectable' within their class string, using custom tooltip 
+             via <div.SeatingArea img[class*='Seat']> elements. Selectable open seats
+             contain 'SeatSelectable' within their class string, using custom tooltip
              attributes to hold distinct price categories and structural seat IDs.
-  Footer:    Global contact columns are nested inside <footer#colophon>. Location 
-             and territory fields are safely split from the primary address paragraph 
+  Footer:    Global contact columns are nested inside <footer#colophon>. Location
+             and territory fields are safely split from the primary address paragraph
              located via structural column rules (<div.column p>).
 """
 
 import json
 import re
 import time
+from datetime import date
 
 import pandas as pd
+from dateutil import parser
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-
-from datetime import datetime, date
-from dateutil import parser
 
 from utils.base_extractor import BaseExtractor
 from utils.logger import setup_logger
@@ -78,7 +77,9 @@ class LoughboroughtownhallExtractor(BaseExtractor):
     def extract(self) -> bytes:
         all_data = []
         venue_details = {"address": None, "city": None, "country": None}
-        driver = self.launch_driver(headless=HEADLESS, page_load_timeout=PAGE_LOAD_TIMEOUT)
+        driver = self.launch_driver(
+            headless=HEADLESS, page_load_timeout=PAGE_LOAD_TIMEOUT
+        )
 
         try:
             all_shows = []
@@ -148,7 +149,6 @@ class LoughboroughtownhallExtractor(BaseExtractor):
 
         return json.dumps(all_data, default=str).encode("utf-8")
 
-
     # ------------------------------------------------------------------
     # Level 2 — Show detail
     # ------------------------------------------------------------------
@@ -213,7 +213,9 @@ class LoughboroughtownhallExtractor(BaseExtractor):
         if not df.empty and "is_limited_run" in df.columns:
             df["is_limited_run"] = None
         if not df.empty and "capacity" in df.columns:
-            df["capacity"] = pd.to_numeric(df["capacity"], errors="coerce").astype("Int64")
+            df["capacity"] = pd.to_numeric(df["capacity"], errors="coerce").astype(
+                "Int64"
+            )
         return df
 
     def _parse(self, raw: bytes) -> pd.DataFrame:
@@ -225,25 +227,26 @@ class LoughboroughtownhallExtractor(BaseExtractor):
         self.custom_logger.info(f"Parsed {len(df)} record(s)")
         return df
 
-
     # ------------------------------------------------------------------
     # Level 1 - Address Details
     # ------------------------------------------------------------------
     def _get_venue_details(self, driver) -> dict:
         """Extract venue address from the contact page footer; returns None values on failure.
-            Market Place, Loughborough, Leicestershire, LE11 3EB
+        Market Place, Loughborough, Leicestershire, LE11 3EB
         """
         data = {"address": None, "city": None, "country": None}
         try:
             # Match the specific contact paragraph using structural relationship selectors
             # Looking inside standard footer -> columns -> target address string paragraph
-            # Market Place, Loughborough, Leicestershire, LE11 3EB           
+            # Market Place, Loughborough, Leicestershire, LE11 3EB
             driver.get(f"{BASE_URL}your-visit/")
 
-            address_p = driver.find_element(By.CSS_SELECTOR, "footer#colophon div.column p")
+            address_p = driver.find_element(
+                By.CSS_SELECTOR, "footer#colophon div.column p"
+            )
             raw_address = address_p.text.strip()
             data["address"] = raw_address
-            
+
             address_parts = [part.strip() for part in raw_address.split(",")]
 
             if len(address_parts) >= 3:
@@ -251,12 +254,11 @@ class LoughboroughtownhallExtractor(BaseExtractor):
                 data["city"] = address_parts[1]
                 if postcode:
                     _, country = get_city_country_uk(postcode)
-                    data["country"] = normalize_country(country) if country else None   
+                    data["country"] = normalize_country(country) if country else None
 
         except Exception as e:
             self.custom_logger.warning(f"  Venue extraction failed: {e}")
         return data
-
 
     # ------------------------------------------------------------------
     # Level 2 — Listing
@@ -277,8 +279,10 @@ class LoughboroughtownhallExtractor(BaseExtractor):
             return []
 
         shows = []
-        shows_cards = driver.find_elements(By.CSS_SELECTOR, "div.events_holder div.event_item")
-        
+        shows_cards = driver.find_elements(
+            By.CSS_SELECTOR, "div.events_holder div.event_item"
+        )
+
         for item in shows_cards:
             try:
                 title_element = item.find_element(By.TAG_NAME, "h4")
@@ -287,15 +291,10 @@ class LoughboroughtownhallExtractor(BaseExtractor):
                 link_element = item.find_element(By.TAG_NAME, "a")
                 link = link_element.get_attribute("href")
 
-                shows.append({
-                    "title": title,
-                    "event_url": link,
-                    "category": category
-                })
+                shows.append({"title": title, "event_url": link, "category": category})
             except Exception:
                 continue
         return shows
-
 
     # ------------------------------------------------------------------
     # Level 3 — Performance calendar
@@ -304,20 +303,28 @@ class LoughboroughtownhallExtractor(BaseExtractor):
     def _extract_performances(self, driver) -> list[dict]:
         """Parses the performance instances row by row from the show details grid."""
         performances = []
-        
+
         try:
-            detail_elements = driver.find_elements(By.CSS_SELECTOR, ".event_details h5.detail")
+            detail_elements = driver.find_elements(
+                By.CSS_SELECTOR, ".event_details h5.detail"
+            )
             if len(detail_elements) > 1:
                 venue = detail_elements[1].text.strip()
         except Exception as inner_e:
             self.custom_logger.warning(f"  theatre name not found: {inner_e}")
-                            
+
         try:
-            rows = driver.find_elements(By.CSS_SELECTOR, "div.show_details_table div.show_row")
+            rows = driver.find_elements(
+                By.CSS_SELECTOR, "div.show_details_table div.show_row"
+            )
             for row in rows:
-                date_element = row.find_element(By.CSS_SELECTOR, ".date_col").text.strip()
-                time_element = row.find_element(By.CSS_SELECTOR, ".time_col").text.strip()
-                price_text = row.find_element(By.CLASS_NAME, "price_col").text.strip()
+                date_element = row.find_element(
+                    By.CSS_SELECTOR, ".date_col"
+                ).text.strip()
+                time_element = row.find_element(
+                    By.CSS_SELECTOR, ".time_col"
+                ).text.strip()
+
                 # Booking URL token
                 book_link_el = row.find_element(By.CSS_SELECTOR, ".book_col a")
                 book_link = book_link_el.get_attribute("href")
@@ -328,18 +335,19 @@ class LoughboroughtownhallExtractor(BaseExtractor):
                 if not perf_date and not perf_time:
                     continue
 
-                performances.append({
-                    "date": perf_date,
-                    "time": perf_time,
-                    "venue": venue,
-                    "booking_url": book_link
-                })
+                performances.append(
+                    {
+                        "date": perf_date,
+                        "time": perf_time,
+                        "venue": venue,
+                        "booking_url": book_link,
+                    }
+                )
 
         except Exception as e:
             self.custom_logger.warning(f"  Error extracting performances: {e}")
         return performances
 
-    
     # ------------------------------------------------------------------
     # Level 4 — Seat pricing via Spektrix iframe
     # ------------------------------------------------------------------
@@ -379,9 +387,11 @@ class LoughboroughtownhallExtractor(BaseExtractor):
                 )
 
                 # Grab all img items inside the seating container that carry the seat attribute layout class strings
-                seats = driver.find_elements(By.CSS_SELECTOR, "div.SeatingArea img[class*='Seat']")
+                seats = driver.find_elements(
+                    By.CSS_SELECTOR, "div.SeatingArea img[class*='Seat']"
+                )
                 self.custom_logger.info(f"📦 Found {len(seats)} unique seats. ")
-                
+
                 perf_capacity = len(seats)
                 if max_capacity is None or perf_capacity > max_capacity:
                     max_capacity = perf_capacity
@@ -469,8 +479,11 @@ class LoughboroughtownhallExtractor(BaseExtractor):
                 break
             last_height = new_height
 
+
 def main():
-    extractor = LoughboroughtownhallExtractor(save_csv_locally=False, csv_incremental_mode=False)
+    extractor = LoughboroughtownhallExtractor(
+        save_csv_locally=False, csv_incremental_mode=False
+    )
     result = extractor.run()
     logger.info("Extraction result: %s", result)
 
