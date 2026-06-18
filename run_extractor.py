@@ -24,7 +24,7 @@ Navigation hierarchy:
 import json
 import re
 import time
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 from dateutil import parser
@@ -54,7 +54,6 @@ from .loughborough_town_hall_config import (
     DELAY_BETWEEN_PERFS,
     DELAY_BETWEEN_SHOWS,
     HEADLESS,
-    IFRAME_WAIT_TIMEOUT,
     PAGE_LOAD_TIMEOUT,
     PAGES,
     SEAT_WAIT_TIMEOUT,
@@ -181,11 +180,15 @@ class LoughboroughtownhallExtractor(BaseExtractor):
             driver, performances
         )
 
-        venue = venue = performances[0].get("venue") if performances else None
+        venue = performances[0].get("venue") if performances else None
 
-        dates = [p["date"] for p in performances]
-        open_date = min(dates)
-        close_date = max(dates)
+        if performances:
+            sorted_dates = sorted([p["date"] for p in performances])
+            open_date = sorted_dates[0]
+            close_date = sorted_dates[-1]
+        else:
+            open_date = datetime.now().strftime("%Y-%m-%d")
+            close_date = datetime.now().strftime("%Y-%m-%d")
 
         return {
             "title": show["title"],
@@ -303,6 +306,7 @@ class LoughboroughtownhallExtractor(BaseExtractor):
     def _extract_performances(self, driver) -> list[dict]:
         """Parses the performance instances row by row from the show details grid."""
         performances = []
+        venue = "No venue listed"
 
         try:
             detail_elements = driver.find_elements(
@@ -311,7 +315,9 @@ class LoughboroughtownhallExtractor(BaseExtractor):
             if len(detail_elements) > 1:
                 venue = detail_elements[1].text.strip()
         except Exception as inner_e:
-            self.custom_logger.warning(f"  theatre name not found: {inner_e}")
+            self.custom_logger.warning(
+                f"  Unexpected error reading theatre element: {inner_e}"
+            )
 
         try:
             rows = driver.find_elements(
@@ -359,11 +365,15 @@ class LoughboroughtownhallExtractor(BaseExtractor):
         currency = None
         max_capacity = None
 
+        # NEW FLAG: Tracks if we hit a technical "no seat map available" or layout error
+        encountered_no_seatmap = False
+
         for i, perf in enumerate(performances, 1):
             key = format_datetime_key(perf["date"], perf["time"])
             if not key:
                 continue
 
+            # If there's no booking URL (e.g. sold out), we can't get seat pricing, but we can still record the performance with an empty seat list
             if not perf.get("booking_url"):
                 seat_pricing[key] = []
                 continue
@@ -375,55 +385,72 @@ class LoughboroughtownhallExtractor(BaseExtractor):
             try:
                 driver.get(perf["booking_url"])
 
-                iframe = WebDriverWait(driver, IFRAME_WAIT_TIMEOUT).until(
-                    EC.presence_of_element_located((By.ID, "SpektrixIFrame"))
-                )
-                driver.switch_to.frame(iframe)
+                iframes = driver.find_elements(By.ID, "SpektrixIFrame")
 
-                WebDriverWait(driver, SEAT_WAIT_TIMEOUT).until(
-                    EC.presence_of_element_located(
-                        (By.CSS_SELECTOR, "div.SeatingArea img")
-                    )
-                )
+                if iframes:
+                    iframe = iframes[0]
 
-                # Grab all img items inside the seating container that carry the seat attribute layout class strings
-                seats = driver.find_elements(
-                    By.CSS_SELECTOR, "div.SeatingArea img[class*='Seat']"
-                )
-                self.custom_logger.info(f"📦 Found {len(seats)} unique seats. ")
+                    driver.switch_to.frame(iframe)
 
-                perf_capacity = len(seats)
-                if max_capacity is None or perf_capacity > max_capacity:
-                    max_capacity = perf_capacity
-
-                seat_list = []
-                for img in seats:
-                    tooltip = (
-                        img.get_attribute("tooltip") or img.get_attribute("title") or ""
-                    )
-                    if not tooltip:
-                        continue
-
-                    match = re.search(r"([A-Z]+\d+)\s*-\s*[££]?([\d,.]+)", tooltip)
-                    if not match:
-                        continue
-
-                    if currency is None:
-                        currency = get_currency_from_price(tooltip)
-
-                    seat_list.append(
-                        {
-                            "seat": match.group(1),
-                            "ticket_price": float(match.group(2).replace(",", "")),
-                        }
+                    WebDriverWait(driver, SEAT_WAIT_TIMEOUT).until(
+                        EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, "div.SeatingArea img")
+                        )
                     )
 
-                seat_pricing[key] = seat_list
-                self.custom_logger.info(f"    {len(seat_list)} seats extracted")
+                    # Grab all img items inside the seating container that carry the seat attribute layout class strings
+                    seats = driver.find_elements(
+                        By.CSS_SELECTOR, "div.SeatingArea img[class*='Seat']"
+                    )
+                    self.custom_logger.info(f" Found {len(seats)} unique seats. ")
 
-            except Exception as e:
-                self.custom_logger.warning(f"  Seat extraction error: {e}")
+                    perf_capacity = len(seats)
+                    if max_capacity is None or perf_capacity > max_capacity:
+                        max_capacity = perf_capacity
+
+                    seat_list = []
+                    for img in seats:
+                        tooltip = (
+                            img.get_attribute("tooltip")
+                            or img.get_attribute("title")
+                            or ""
+                        )
+                        if not tooltip:
+                            continue
+
+                        match = re.search(r"([A-Z]+\d+)\s*-\s*[££]?([\d,.]+)", tooltip)
+                        if not match:
+                            continue
+
+                        if currency is None:
+                            currency = get_currency_from_price(tooltip)
+
+                        seat_list.append(
+                            {
+                                "seat": match.group(1),
+                                "ticket_price": float(match.group(2).replace(",", "")),
+                            }
+                        )
+
+                    seat_pricing[key] = seat_list
+                    self.custom_logger.info(f"    {len(seat_list)} seats extracted")
+
+                else:
+                    # MISSING SEATMAP: Page loaded but iframe layout isn't there
+                    seat_pricing[key] = []
+                    encountered_no_seatmap = True  # <--- Flagged
+                    self.custom_logger.info(
+                        f" Non seat map available for {perf['date']} {perf['time']}"
+                    )
+
+            except Exception:
+                # LAYOUT ERROR / TIMEOUT
                 seat_pricing[key] = []
+                encountered_no_seatmap = True  # <--- Flagged
+                self.custom_logger.info(
+                    f" No seat map / unsupported layout for {perf['date']} {perf['time']}"
+                )
+                continue
 
             finally:
                 try:
@@ -432,6 +459,19 @@ class LoughboroughtownhallExtractor(BaseExtractor):
                     pass
 
             human_delay(*DELAY_BETWEEN_PERFS)
+
+        # =================================================================================
+        # CONDITIONAL CHECK:
+        # Only clear to {} if we actually hit "no seatmap" issues AND everything is empty.
+        # =================================================================================
+        if encountered_no_seatmap and all(
+            len(seats) == 0 for seats in seat_pricing.values()
+        ):
+            self.custom_logger.info(
+                " All performances lack a seat map layout. Resetting seat_pricing = {}"
+            )
+            seat_pricing = {}
+        # =================================================================================
 
         return seat_pricing, currency, max_capacity
 
@@ -464,7 +504,9 @@ class LoughboroughtownhallExtractor(BaseExtractor):
         for p in perfs:
             key = f"{p['date']} {p['time']}"
             seats = seat_pricing.get(key, [])
-            seat_label = f"{len(seats)} seats" if seats else "sold out / no data"
+            seat_label = (
+                f"{len(seats)} seats" if seats else "No seat map available or sold out"
+            )
             lines.append(f"       • {key}  →  {seat_label}")
         lines.append(divider)
         self.custom_logger.info("\n".join(lines))
