@@ -24,7 +24,7 @@ Navigation hierarchy:
 import json
 import re
 import time
-from datetime import date, datetime
+from datetime import date
 
 import pandas as pd
 from dateutil import parser
@@ -182,14 +182,6 @@ class LoughboroughtownhallExtractor(BaseExtractor):
 
         venue = performances[0].get("venue") if performances else None
 
-        if performances:
-            sorted_dates = sorted([p["date"] for p in performances])
-            open_date = sorted_dates[0]
-            close_date = sorted_dates[-1]
-        else:
-            open_date = datetime.now().strftime("%Y-%m-%d")
-            close_date = datetime.now().strftime("%Y-%m-%d")
-
         return {
             "title": show["title"],
             "venue_url": show["event_url"],
@@ -198,10 +190,10 @@ class LoughboroughtownhallExtractor(BaseExtractor):
             "address": venue_details["address"],
             "city": venue_details["city"],
             "country": normalize_country(venue_details["country"]),
-            "open_date": open_date,
-            "close_date": close_date,
-            "booking_start_date": open_date,
-            "booking_end_date": close_date,
+            "open_date": show["open_date"],
+            "close_date": show["close_date"],
+            "booking_start_date": show["open_date"],
+            "booking_end_date": show["close_date"],
             "upcoming_performances": [
                 {"date": p["date"], "time": p["time"]} for p in performances
             ],
@@ -294,7 +286,39 @@ class LoughboroughtownhallExtractor(BaseExtractor):
                 link_element = item.find_element(By.TAG_NAME, "a")
                 link = link_element.get_attribute("href")
 
-                shows.append({"title": title, "event_url": link, "category": category})
+                # "Tue 8 Sep to Sat 12 Sep 2026 - 2:30 PM | 7:30 PM"
+                # "Tue 23 Feb 2027 - 7:30 PM"
+                date_element = item.find_element(
+                    By.CSS_SELECTOR, ".entry-meta .post_meta"
+                )
+                date_text = date_element.get_attribute("textContent").strip()
+
+                # Remove times
+                date_part = date_text.split(" - ")[0].strip()
+
+                if " to " in date_part:
+                    # Multi-day event
+                    open_raw, close_raw = [d.strip() for d in date_part.split(" to ")]
+
+                    # Extract the year and append it to the open date
+                    open_date = parser.parse(open_raw).date().isoformat()
+                    close_date = parser.parse(close_raw).date().isoformat()
+
+                else:
+                    # Single-day event
+                    open_date = parser.parse(date_part).date().isoformat()
+                    close_date = open_date
+
+                shows.append(
+                    {
+                        "title": title,
+                        "event_url": link,
+                        "category": category,
+                        "open_date": open_date,
+                        "close_date": close_date,
+                    }
+                )
+
             except Exception:
                 continue
         return shows
